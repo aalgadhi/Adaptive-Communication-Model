@@ -15,6 +15,8 @@ class MDP:
         
         # Initialize policy pi(s) arbitrarily (pick the first available action)
         self.policy = {s: self.actions[0] for s in self.states}
+        self.greedy_policy = {s: self.actions[0] for s in self.states}
+
 
     def get_transition_prob(self, state, action, next_state):
         if state not in self.transitions or action not in self.transitions[state]:
@@ -55,6 +57,7 @@ class MDP:
             
             if delta < self.epsilon:
                 break
+                
 
     def policy_improvement(self):
         """Greedily updates the policy based on the current value function V(s)."""
@@ -102,30 +105,33 @@ class MDP:
                 break
         return self.policy, self.V
     
-    def solve_greedy_comm(self):
+    def solve_greedy(self):
         """Creates a Greedy Policy"""
         print("Greedy Policy...")
 
         for s in self.states:
             best_action = None
-            best_reward = math
+            max_r = float('-inf')
             possible_actions = self.actions
+
             if s in self.transitions:
                 possible_actions = list(self.transitions[s].keys())
 
             for a in possible_actions:
                 if s in self.transitions and a in self.transitions[s]:
                     for prob, next_s in self.transitions[s][a]:
-                        r = self.get_reward(s, a, next_s)
-                
-                        if q_value > max_q_value:
-                            max_q_value = q_value
-                            best_action = a
-                    
+                        if next_s[:2] == s[:2]: # Conditioning the next state jammers and channels to be the same
+                            r = self.get_reward(s, a, next_s)
+
+                            if r > max_r:
+                                max_r = r
+                                best_action = a
+                        
             # Update policy
             if best_action is not None:
-                greedy_policy[s] = best_action
+                self.greedy_policy[s] = best_action
 
+        return self.greedy_policy
         
     def simulate_monte_carlo(self, start_state, num_episodes=1, horizon=100, policy=None):
         """Simulates the environment to evaluate policy performance or random walks."""

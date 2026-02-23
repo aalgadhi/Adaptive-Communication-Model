@@ -10,6 +10,23 @@ from mdp_solver import MDP
 def multi_drones_reward():
     pass
 
+def comm_mdp_reward(state, next_state, action):
+    curr_J, curr_C, prev_mcs, prev_f = state
+    nj, nc, _, _ = next_state
+    target_f, target_mcs, target_p = action
+
+    if nj[target_f - 1] == 1:
+        reward = -20
+    else:
+        rate = 30.0 if nc[target_f - 1] == 1 else 10.0
+        c_mcs = 5.0 if target_mcs != prev_mcs else 0.0
+        c_f = 10.0 if target_f != prev_f else 0.0
+        reward = rate - c_mcs - c_f
+    
+    return reward
+
+
+
 def build_comm_mdp(jammer="random"):
     # 1. Action Space
     channels = [1, 2, 3]
@@ -61,57 +78,43 @@ def build_comm_mdp(jammer="random"):
 
             # 4. Reward Logic: Rate - Costs
             for prob, next_s in outcomes:
-                nj, nc, _, _ = next_s
-                if nj[target_f - 1] == 1:
-                    reward = -20
-                else:
-                    rate = 30.0 if nc[target_f - 1] == 1 else 10.0
-                    c_mcs = 5.0 if target_mcs != prev_mcs else 0.0
-                    c_f = 10.0 if target_f != prev_f else 0.0
-                    reward = rate - c_mcs - c_f
-
+                reward = comm_mdp_reward(s, next_s, a)
                 R[s][a][next_s] = reward
 
     return MDP(states, actions, T, R), states
 
 def plot_strategic_analysis(policy, states):
     data = []
+    channel1_snr = []
+    freq_chosen = []
     for s, a in policy.items():
-        data.append({
-            'Ch1_Jammed': s[0][0],
-            'Ch1_SNR': s[1][0],
-            'Action_Channel': a[0],
-            'Action_MCS': a[1],
-            'Chosen_Ch_SNR': s[1][a[0]-1]
-        })
-    df = pd.DataFrame(data)
+        if s[0][0] == 0 and not s[1][1] and not s[1][2] and s[2] == 1:
+            channel1_snr.append(s[1][0])
+            freq_chosen.append(a[0])
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    # 1. Monotonicity: SNR vs MCS
-    sns.barplot(x='Chosen_Ch_SNR', y='Action_MCS', data=df, ax=axes[0], palette='viridis')
-    axes[0].set_title('Monotonicity: SNR vs MCS')
+    data = {
+        "Channel 1 SNR": channel1_snr,
+        "Chosen Freq": freq_chosen
+    }
+    print(data)
 
-    # 2. SNR vs Frequency Selection
-    sns.countplot(x='Ch1_SNR', hue='Action_Channel', data=df, ax=axes[1])
-    axes[1].set_title('Frequency Selection vs Ch1 SNR')
-
-    # 3. Jamming Awareness
-    sns.countplot(x='Ch1_Jammed', hue='Action_Channel', data=df, ax=axes[2])
-    axes[2].set_title('Frequency Selection vs Ch1 Jamming')
-
-    plt.tight_layout()
-    plt.savefig('strategic_analysis.png')
-    plt.show()
-
-def run_comparison(mdp, policy):
+    sns.lineplot(data, x="Channel 1 SNR", y="Chosen Freq")
+    
+   
+def run_comparison(mdp, policy, greedy):
     start_state = random.choice(mdp.states)
     horizon = 50
     num_episodes = 100
+
     res_opt = mdp.simulate_monte_carlo(start_state, num_episodes=num_episodes, horizon=horizon, policy=policy)
     avg_opt = np.mean([r['total_reward'] for r in res_opt])
     avg_opt_reward_by_episode = [np.mean(list(ep['trajectory'][j][3] for ep in res_opt)) for j in range(horizon)]
 
+
+    res_grd = mdp.simulate_monte_carlo(start_state, num_episodes=num_episodes, horizon=horizon, policy=greedy)
+    avg_grd = np.mean([r['total_reward'] for r in res_grd])
+    avg_grd_reward_by_episode = [np.mean(list(ep['trajectory'][j][3] for ep in res_grd)) for j in range(horizon)]
 
 
     res_rnd = mdp.simulate_monte_carlo(start_state, num_episodes=num_episodes, horizon=horizon, policy=None)
@@ -123,6 +126,7 @@ def run_comparison(mdp, policy):
     x = list(range(horizon))
 
     plt.plot(x, avg_opt_reward_by_episode, 'r--', label="Optimal Policy") 
+    plt.plot(x, avg_grd_reward_by_episode, 'g--', label="Greedy Policy")
     plt.plot(x, avg_rnd_reward_by_episode, 'b--', label="Random Policy")
 
     plt.xlabel("Episode")
@@ -139,11 +143,12 @@ def run_comparison(mdp, policy):
     # plt.show()
 
     print(f"Optimal Policy Avg Reward: {avg_opt:.2f}")
+    print(f"Greedy Policy Avg Reward: {avg_grd:.2f}")
     print(f"Random Policy Avg Reward: {avg_rnd:.2f}")
 
 if __name__ == "__main__":
-    comm_mdp, all_states = build_comm_mdp(jammer="random")
+    comm_mdp, all_states = build_comm_mdp(jammer="sweeper")
     policy, _ = comm_mdp.solve_policy_iteration()
-    greedy, _ = comm_mdp.solve_greedy()
-    # plot_strategic_analysis(policy, all_states)
-    run_comparison(comm_mdp, policy)
+    greedy = comm_mdp.solve_greedy()
+    plot_strategic_analysis(policy, all_states)
+    run_comparison(comm_mdp, policy, greedy)
