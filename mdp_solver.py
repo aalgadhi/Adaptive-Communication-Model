@@ -2,7 +2,7 @@ import random
 import time
 
 class MDP:
-    def __init__(self, states, actions, transitions, rewards, gamma=0.9, epsilon=1e-6):
+    def __init__(self, states, actions, transitions, rewards, gamma=0.99, epsilon=1e-6):
         self.states = states
         self.actions = actions
         self.transitions = transitions
@@ -105,34 +105,60 @@ class MDP:
                 break
         return self.policy, self.V
     
-    def solve_greedy(self):
-        """Creates a Greedy Policy"""
-        print("Greedy Policy...")
+    # def solve_greedy(self):
+    #     """Creates a Greedy Policy"""
+    #     print("Greedy Policy...")
 
+    #     for s in self.states:
+    #         best_action = None
+    #         max_r = float('-inf')
+    #         possible_actions = self.actions
+
+    #         if s in self.transitions:
+    #             possible_actions = list(self.transitions[s].keys())
+
+    #         for a in possible_actions:
+    #             if s in self.transitions and a in self.transitions[s]:
+    #                 for prob, next_s in self.transitions[s][a]:
+    #                     if next_s[:2] == s[:2]: # Conditioning the next state jammers and channels to be the same
+    #                         r = self.get_reward(s, a, next_s)
+
+    #                         if r > max_r:
+    #                             max_r = r
+    #                             best_action = a
+                        
+    #         # Update policy
+    #         if best_action is not None:
+    #             self.greedy_policy[s] = best_action
+
+    #     return self.greedy_policy
+    
+
+    def solve_greedy(self):
+        """Creates a Myopic (Short-term) Greedy Policy."""
         for s in self.states:
             best_action = None
-            max_r = float('-inf')
-            possible_actions = self.actions
+            max_expected_r = float('-inf')
+            
+            # We only look at actions available for this specific state
+            actions_to_try = self.transitions.get(s, {}).keys()
 
-            if s in self.transitions:
-                possible_actions = list(self.transitions[s].keys())
+            for a in actions_to_try:
+                # Expected Reward = Sum(P(s'|s,a) * R(s,a,s'))
+                current_expected_r = sum(
+                    prob * self.get_reward(s, a, ns) 
+                    for prob, ns in self.transitions[s][a]
+                )
 
-            for a in possible_actions:
-                if s in self.transitions and a in self.transitions[s]:
-                    for prob, next_s in self.transitions[s][a]:
-                        if next_s[:2] == s[:2]: # Conditioning the next state jammers and channels to be the same
-                            r = self.get_reward(s, a, next_s)
-
-                            if r > max_r:
-                                max_r = r
-                                best_action = a
-                        
-            # Update policy
-            if best_action is not None:
+                if current_expected_r > max_expected_r:
+                    max_expected_r = current_expected_r
+                    best_action = a
+            
+            if best_action:
                 self.greedy_policy[s] = best_action
-
         return self.greedy_policy
-        
+
+
     def simulate_monte_carlo(self, start_state, num_episodes=1, horizon=100, policy=None):
         """Simulates the environment to evaluate policy performance or random walks."""
         simulation_results = []
@@ -165,7 +191,6 @@ class MDP:
 
                 # Get Reward
                 reward = self.get_reward(current_state, action, next_state)
-
                 # Record Data
                 total_reward += reward
                 trajectory.append((current_state, action, reward, total_reward))
