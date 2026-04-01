@@ -10,14 +10,11 @@ from mdp_solver import MDP
 # Random seed
 SEED = 42
 
-# -----------------------------
 # Li-inspired anti-jamming setup
-# -----------------------------
 CHANNELS = [1, 2, 3]
 JAMMING_VECTORS = [(1, 0, 0), (0, 1, 0), (0, 0, 1)]
 
-# Li's comparison section uses three low transmit powers.
-POWER_LEVELS_DBM = [-8.5, -7.5]
+POWER_LEVELS_DBM = [-9.5, -8.5, -7.5] # Taken from Li's work
 POWER_LEVELS = [1e-3 * (10 ** (p_dbm / 10.0)) for p_dbm in POWER_LEVELS_DBM]
 DBM_FROM_POWER = {p: p_dbm for p, p_dbm in zip(POWER_LEVELS, POWER_LEVELS_DBM)}
 
@@ -165,7 +162,7 @@ def comm_mdp_reward(state, next_state, action):
     freq_switch_cost = FREQ_SWITCH_COST if target_f != curr_f else 0.0
     power_cost = POWER_COST_COEFF * (target_p / max(POWER_LEVELS))
 
-    total_cost = math.log(1e4 * delay_cost) + mcs_switch_cost + freq_switch_cost + power_cost + 5 * (next_jammer_state[target_f-1] == 1)
+    total_cost = math.log(1e4 * delay_cost) + mcs_switch_cost + freq_switch_cost + power_cost + (next_jammer_state[target_f-1] == 1)
 
     def print_reward_info():
         print(
@@ -248,331 +245,6 @@ def build_comm_mdp(jammer="reactive"):
 def representative_state(prev_mcs=1, prev_f=1, jammer=(0, 1, 0), channel_tuple=(0, 3, 6)):
     return (jammer, channel_tuple, prev_mcs, prev_f)
 
-
-def plot_strategic_analysis(policy):
-    """Heatmap: selected channel vs jammer position and chosen channel's own quality."""
-    fixed_prev_mcs = 1
-    fixed_prev_f = 1
-    fixed_other_channels = (3, 3)
-
-    policy_grid = np.zeros((len(JAMMING_VECTORS), len(SNR_STATES)))
-
-    for i, J in enumerate(JAMMING_VECTORS):
-        for j, c1 in enumerate(SNR_STATES):
-            state = (J, (c1, fixed_other_channels[0], fixed_other_channels[1]), fixed_prev_mcs, fixed_prev_f)
-            if state in policy:
-                policy_grid[i, j] = policy[state][0]
-
-    plt.figure(figsize=(10, 5))
-    sns.heatmap(policy_grid, annot=True, cmap="YlGnBu", cbar_kws={"label": "Selected Channel"})
-    plt.title(
-        "Policy Map: Selected Channel\n"
-        f"(C2={fixed_other_channels[0]}, C3={fixed_other_channels[1]}, Prev MCS={fixed_prev_mcs}, Prev Freq={fixed_prev_f})"
-    )
-    plt.xlabel("Channel 1 Quality State (0-7)")
-    plt.ylabel("Jammer Active Channel")
-    plt.yticks(ticks=[0.5, 1.5, 2.5], labels=["CH 1", "CH 2", "CH 3"])
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_3d_action_manifold(policy):
-    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111, projection="3d")
-
-    fixed_J = (1, 0, 0)
-    fixed_prev_f = 2
-    fixed_prev_mcs = 1
-    fixed_c3 = 3
-
-    x_vals, y_vals, z_vals, colors = [], [], [], []
-
-    for c1 in SNR_STATES:
-        for c2 in SNR_STATES:
-            state = (fixed_J, (c1, c2, fixed_c3), fixed_prev_mcs, fixed_prev_f)
-            if state in policy:
-                action = policy[state]
-                x_vals.append(c1)
-                y_vals.append(c2)
-                z_vals.append(action[2])
-                colors.append(action[1])
-
-    sc = ax.scatter(x_vals, y_vals, z_vals, c=colors, cmap="plasma", s=100, alpha=0.8, edgecolors="w")
-    ax.set_xlabel("Channel 1 Quality")
-    ax.set_ylabel("Channel 2 Quality")
-    ax.set_zlabel("Target Transmit Power (W)")
-    plt.title(f"Power/MCS Adaptation with Independent Channel States (C3 fixed at {fixed_c3})")
-    cbar = plt.colorbar(sc, ax=ax, shrink=0.5)
-    cbar.set_label("Chosen MCS Level")
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_monotonicity_variable_analysis(policy):
-    avg_mcs = []
-    avg_p = []
-
-    for chosen_quality in SNR_STATES:
-        matching_actions = []
-        for s, a in policy.items():
-            _, c_tuple, _, _ = s
-            target_channel = a[0] - 1
-            if c_tuple[target_channel] == chosen_quality:
-                matching_actions.append(a)
-
-        avg_mcs.append(np.mean([a[1] for a in matching_actions]) if matching_actions else np.nan)
-        avg_p.append(np.mean([a[2] for a in matching_actions]) if matching_actions else np.nan)
-
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.set_xlabel("Chosen Channel Quality State")
-    ax1.set_ylabel("Mean MCS Choice", color="tab:blue")
-    ax1.plot(SNR_STATES, avg_mcs, color="tab:blue", marker="o", lw=3)
-    ax1.tick_params(axis="y", labelcolor="tab:blue")
-
-    ax2 = ax1.twinx()
-    ax2.set_ylabel("Mean Power Choice (W)", color="tab:red")
-    ax2.plot(SNR_STATES, avg_p, color="tab:red", marker="x", linestyle="--", lw=2)
-    ax2.tick_params(axis="y", labelcolor="tab:red")
-
-    plt.title("Policy Monotonicity: Action Response to Selected Channel Quality")
-    fig.tight_layout()
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
-
-def plot_jammer_avoidance_heatmap(policy):
-    heatmap_data = np.zeros((3, 3))
-
-    for s, a in policy.items():
-        jammer_ch = np.argmax(s[0])
-        target_ch = a[0] - 1
-        heatmap_data[jammer_ch, target_ch] += 1
-
-    row_sums = heatmap_data.sum(axis=1, keepdims=True)
-    heatmap_data = np.divide(heatmap_data, row_sums, out=np.zeros_like(heatmap_data), where=row_sums != 0)
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(
-        heatmap_data,
-        annot=True,
-        cmap="Reds",
-        xticklabels=["Target Ch 1", "Target Ch 2", "Target Ch 3"],
-        yticklabels=["Jammer Ch 1", "Jammer Ch 2", "Jammer Ch 3"],
-    )
-    plt.title("Jammer Avoidance Probability Heatmap\n(Optimal Policy Distribution)")
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_delay_curves_like_paper(save_path=None):
-    """Paper-style delay curves versus effective SINR for each MCS and power level."""
-    fig, ax = plt.subplots(figsize=(9, 6))
-    marker_cycle = ["o", "^", "s"]
-
-    for p_idx, power in enumerate(POWER_LEVELS):
-        sinr_points = []
-        delay_curves = {m: [] for m in MCS_LEVELS}
-        for state_idx in SNR_STATES:
-            jammer = (0, 0, 1)
-            channel_tuple = (state_idx, 4, 4)
-            action_base = (1, 1, power)
-            metrics_base = _selected_link_metrics(jammer, channel_tuple, action_base)
-            sinr_points.append(metrics_base["sinr_db"])
-            for m in MCS_LEVELS:
-                metrics = _selected_link_metrics(jammer, channel_tuple, (1, m, power))
-                expected_good_rate = max(metrics["goodput"], 1e-9)
-                delay_curves[m].append((1.0 / expected_good_rate) * 1e4)
-
-        for m in MCS_LEVELS:
-            ax.semilogy(
-                sinr_points,
-                delay_curves[m],
-                marker=marker_cycle[p_idx],
-                linewidth=1.5,
-                markersize=4,
-                label=f"{MCS_LABELS[m]}, {POWER_LABELS[power]}",
-            )
-
-    ax.set_title("Delay Cost vs. Effective SINR")
-    ax.set_xlabel("Effective SINR (dB)")
-    ax.set_ylabel("Delay Cost × 1e4")
-    ax.grid(True, which="both", linestyle=":", alpha=0.5)
-    ax.legend(fontsize=8, ncol=3)
-    fig.tight_layout()
-    if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.show()
-
-
-def plot_optimal_mcs_vs_sinr_like_paper(policy, save_path=None):
-    """Paper-style threshold plot of optimal MCS versus SINR for several previous MCS values."""
-    fig, ax = plt.subplots(figsize=(9, 6))
-    fixed_jammer = (0, 1, 0)
-    fixed_other = (4, 4)
-    fixed_prev_f = 1
-    markers = ["o", "^", "s"]
-
-    for idx, prev_mcs in enumerate(MCS_LEVELS):
-        sinr_values = []
-        chosen_mcs = []
-        for c1 in SNR_STATES:
-            state = (fixed_jammer, (c1, fixed_other[0], fixed_other[1]), prev_mcs, fixed_prev_f)
-            action = policy[state]
-            metrics = _selected_link_metrics(fixed_jammer, (c1, fixed_other[0], fixed_other[1]), (1, action[1], action[2]))
-            sinr_values.append(metrics["sinr_db"])
-            chosen_mcs.append(action[1])
-        ax.step(sinr_values, chosen_mcs, where="post", marker=markers[idx], linewidth=1.8, label=f"Prev MCS={prev_mcs}")
-
-    ax.set_title("Optimal MCS vs. Effective SINR")
-    ax.set_xlabel("Effective SINR (dB)")
-    ax.set_ylabel("Optimal MCS")
-    ax.set_yticks(MCS_LEVELS)
-    ax.grid(True, linestyle=":", alpha=0.5)
-    ax.legend()
-    fig.tight_layout()
-    if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.show()
-
-
-def extract_policy_statistics(policy, switching_cost_values):
-    """Evaluate throughput and switching rate under different MCS switching penalties."""
-    base_state = representative_state(prev_mcs=1, prev_f=1, jammer=(0, 1, 0), channel_tuple=(2, 4, 6))
-    stats = {"switch_cost": [], "throughput": [], "switch_rate": []}
-
-    original_coeff = globals().get("MCS_SWITCH_COST_COEFF", 5.0)
-    for coeff in switching_cost_values:
-        globals()["MCS_SWITCH_COST_COEFF"] = coeff
-        mdp, _ = build_comm_mdp(jammer="random")
-        local_policy, _ = mdp.solve_policy_iteration()
-
-        start_state = base_state
-        episodes = mdp.simulate_monte_carlo(start_state, num_episodes=6, horizon=50, policy=local_policy)
-        throughputs = []
-        switch_counts = []
-        for ep in episodes:
-            traj = ep["trajectory"]
-            state = start_state
-            prev_action = None
-            for step in traj:
-                action = local_policy[state]
-                link = _selected_link_metrics(state[0], state[1], action)
-                throughputs.append(link["goodput"] / 1e6)
-                if prev_action is not None and action[1] != prev_action[1]:
-                    switch_counts.append(1)
-                else:
-                    switch_counts.append(0)
-                prev_action = action
-                state = step[1]
-
-        stats["switch_cost"].append(coeff)
-        stats["throughput"].append(float(np.mean(throughputs)))
-        stats["switch_rate"].append(float(np.mean(switch_counts) * 100.0))
-
-    globals()["MCS_SWITCH_COST_COEFF"] = original_coeff
-    return stats
-
-
-def plot_switching_tradeoff_like_paper(save_prefix=None):
-    switch_cost_values = [0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0]
-    stats = extract_policy_statistics(None, switch_cost_values)
-
-    fig, axes = plt.subplots(2, 1, figsize=(8, 9), sharex=True)
-
-    axes[0].plot(stats["switch_cost"], stats["throughput"], marker="s", linewidth=2)
-    axes[0].set_title("Throughput vs. MCS Switching Cost")
-    axes[0].set_ylabel("Mean Goodput (Mbit/s)")
-    axes[0].grid(True, linestyle=":", alpha=0.5)
-
-    axes[1].plot(stats["switch_cost"], stats["switch_rate"], marker="o", linewidth=2)
-    axes[1].set_title("MCS Switching Rate vs. MCS Switching Cost")
-    axes[1].set_xlabel("Switching Cost Coefficient")
-    axes[1].set_ylabel("MCS Switch Rate (%)")
-    axes[1].grid(True, linestyle=":", alpha=0.5)
-
-    fig.tight_layout()
-    if save_prefix:
-        fig.savefig(f"{save_prefix}_tradeoff.png", dpi=200, bbox_inches="tight")
-    plt.show()
-
-
-def plot_paper_style_summary(policy, save_path=None):
-    """Create a 2x2 summary figure similar to the paper layout."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-
-    # Panel 1: delay curves
-    marker_cycle = ["o", "^", "s"]
-    for p_idx, power in enumerate(POWER_LEVELS):
-        sinr_points = []
-        delay_curves = {m: [] for m in MCS_LEVELS}
-        for state_idx in SNR_STATES:
-            jammer = (0, 0, 1)
-            channel_tuple = (state_idx, 4, 4)
-            metrics_base = _selected_link_metrics(jammer, channel_tuple, (1, 1, power))
-            sinr_points.append(metrics_base["sinr_db"])
-            for m in MCS_LEVELS:
-                metrics = _selected_link_metrics(jammer, channel_tuple, (1, m, power))
-                delay_curves[m].append((1.0 / max(metrics["goodput"], 1e-9)) * 1e4)
-        for m in MCS_LEVELS:
-            axes[0, 0].semilogy(
-                sinr_points,
-                delay_curves[m],
-                marker=marker_cycle[p_idx],
-                linewidth=1.2,
-                markersize=3,
-                label=f"{MCS_LABELS[m]}, {POWER_LABELS[power]}",
-            )
-    axes[0, 0].set_title("Delay Costs vs. Effective SINR")
-    axes[0, 0].set_xlabel("Effective SINR (dB)")
-    axes[0, 0].set_ylabel("Delay Cost × 1e4")
-    axes[0, 0].grid(True, which="both", linestyle=":", alpha=0.5)
-    axes[0, 0].legend(fontsize=7, ncol=2)
-
-    # Panel 2: throughput vs switching cost
-    stats = extract_policy_statistics(policy, [0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0])
-    axes[0, 1].plot(stats["switch_cost"], stats["throughput"], marker="s", linewidth=2)
-    axes[0, 1].set_title("Throughput vs. Switching Cost")
-    axes[0, 1].set_xlabel("MCS Switching Cost Coefficient")
-    axes[0, 1].set_ylabel("Mean Goodput (Mbit/s)")
-    axes[0, 1].grid(True, linestyle=":", alpha=0.5)
-
-    # Panel 3: optimal MCS vs SINR
-    fixed_jammer = (0, 1, 0)
-    fixed_other = (4, 4)
-    fixed_prev_f = 1
-    markers = ["o", "^", "s"]
-    for idx, prev_mcs in enumerate(MCS_LEVELS):
-        sinr_values = []
-        chosen_mcs = []
-        for c1 in SNR_STATES:
-            state = (fixed_jammer, (c1, fixed_other[0], fixed_other[1]), prev_mcs, fixed_prev_f)
-            action = policy[state]
-            metrics = _selected_link_metrics(fixed_jammer, (c1, fixed_other[0], fixed_other[1]), (1, action[1], action[2]))
-            sinr_values.append(metrics["sinr_db"])
-            chosen_mcs.append(action[1])
-        axes[1, 0].step(sinr_values, chosen_mcs, where="post", marker=markers[idx], linewidth=1.8, label=f"Prev MCS={prev_mcs}")
-    axes[1, 0].set_title("Optimal MCS vs. Effective SINR")
-    axes[1, 0].set_xlabel("Effective SINR (dB)")
-    axes[1, 0].set_ylabel("Optimal MCS")
-    axes[1, 0].set_yticks(MCS_LEVELS)
-    axes[1, 0].grid(True, linestyle=":", alpha=0.5)
-    axes[1, 0].legend(fontsize=8)
-
-    # Panel 4: switching rate vs switching cost
-    axes[1, 1].plot(stats["switch_cost"], stats["switch_rate"], marker="o", linewidth=2)
-    axes[1, 1].set_title("Switching Rate vs. Switching Cost")
-    axes[1, 1].set_xlabel("MCS Switching Cost Coefficient")
-    axes[1, 1].set_ylabel("MCS Switch Rate (%)")
-    axes[1, 1].grid(True, linestyle=":", alpha=0.5)
-
-    fig.tight_layout()
-    if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.show()
-
-
 def run_comparison(mdp, policy, greedy):
     seed = 227
     random.seed(seed)
@@ -588,9 +260,16 @@ def run_comparison(mdp, policy, greedy):
     avg_grd = [np.mean([ep["trajectory"][j][3] for ep in res_grd]) for j in range(horizon)]
     avg_rnd = [np.mean([ep["trajectory"][j][3] for ep in res_rnd]) for j in range(horizon)]
 
-    print("Cumulative optimal reward:", avg_opt[-1] / len(avg_opt))
-    print("Cumulative greedy reward:", avg_grd[-1] / len(avg_grd))
-    print("Cumulative random reward:", avg_rnd[-1] / len(avg_rnd))
+    print("Cumulative optimal reward:", avg_opt[-1] / horizon)
+    value = res_opt[0]["value"]
+    tot_r = res_opt[0]["total_reward"]
+    dsc_r = res_opt[0]["discounted_return"]
+    print("Value:", value)
+    print("Tot_r:", tot_r)
+    print("Dsc_r:", dsc_r)
+    print("Tot_r/hor:", tot_r/horizon)
+    print("Cumulative greedy reward:", avg_grd[-1] / horizon)
+    print("Cumulative random reward:", avg_rnd[-1] / horizon)
 
     plt.figure(figsize=(12, 5))
 
@@ -616,18 +295,9 @@ def run_comparison(mdp, policy, greedy):
 
 
 if __name__ == "__main__":
-    comm_mdp, _ = build_comm_mdp(jammer="reactive")
+    comm_mdp, _ = build_comm_mdp(jammer="sweeper")
 
     policy, V = comm_mdp.solve_policy_iteration()
     greedy = comm_mdp.solve_greedy()
 
-    # plot_paper_style_summary(policy, save_path="wobattery_paper_style_summary.png")
-    # plot_delay_curves_like_paper(save_path="wobattery_delay_curves.png")
-    # plot_optimal_mcs_vs_sinr_like_paper(policy, save_path="wobattery_optimal_mcs.png")
-    # plot_switching_tradeoff_like_paper(save_prefix="")
-
-    plot_strategic_analysis(policy)
-    plot_3d_action_manifold(policy)
-    plot_monotonicity_variable_analysis(policy)
-    plot_jammer_avoidance_heatmap(policy)
     run_comparison(comm_mdp, policy, greedy)
